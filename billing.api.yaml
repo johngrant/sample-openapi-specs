@@ -1,0 +1,394 @@
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: billing-api
+  title: Billing API
+  description: Endpoints for invoices, payments, refunds, and subscriptions.
+  tags: [billing, payments, invoices, refunds, subscriptions, rest, openapi]
+spec:
+  type: openapi
+  lifecycle: experimental
+  owner: group:billing-team
+  system: commerce-platform
+  definition: |
+    openapi: 3.0.3
+    info:
+      title: Billing API
+      version: 1.0.0
+      description: >
+        The Billing API manages invoices, payments, refunds, and subscriptions.
+        OAuth 2.0 scopes are used to control access at the operation level.
+    servers:
+      - url: https://api.example.com/billing/v1
+        description: Production
+      - url: https://sandbox.api.example.com/billing/v1
+        description: Sandbox
+    tags:
+      - name: Invoices
+      - name: Payments
+      - name: Refunds
+      - name: Subscriptions
+    components:
+      securitySchemes:
+        oauth2:
+          type: oauth2
+          flows:
+            authorizationCode:
+              authorizationUrl: https://auth.example.com/oauth2/authorize
+              tokenUrl: https://auth.example.com/oauth2/token
+              scopes:
+                billing.read: Read high-level billing resources
+                billing.write: Modify billing resources
+                invoices.read: Read invoices
+                invoices.write: Create/update invoices
+                payments.create: Create payments/charges
+                payments.read: Read payment details
+                refunds.create: Create refunds
+                refunds.read: Read refund details
+                subscriptions.read: Read subscriptions
+                subscriptions.write: Create/update/cancel subscriptions
+                admin.billing: Admin-level billing actions
+      schemas:
+        Invoice:
+          type: object
+          required: [id, customerId, currency, amountDue, status, issuedAt]
+          properties:
+            id: { type: string, example: inv_123 }
+            customerId: { type: string, example: cust_abc }
+            currency: { type: string, example: USD }
+            amountDue: { type: number, format: float, example: 149.99 }
+            amountPaid: { type: number, format: float, example: 0.0 }
+            status:
+              type: string
+              enum: [draft, open, paid, void, uncollectible]
+              example: open
+            issuedAt: { type: string, format: date-time }
+            dueAt: { type: string, format: date-time, nullable: true }
+            lineItems:
+              type: array
+              items:
+                type: object
+                required: [sku, quantity, unitPrice]
+                properties:
+                  sku: { type: string, example: SKU-PRO-001 }
+                  description: { type: string }
+                  quantity: { type: integer, minimum: 1, example: 2 }
+                  unitPrice: { type: number, format: float, example: 74.995 }
+            metadata:
+              type: object
+              additionalProperties: { type: string }
+        Payment:
+          type: object
+          required: [id, invoiceId, amount, currency, status, createdAt]
+          properties:
+            id: { type: string, example: pay_456 }
+            invoiceId: { type: string, example: inv_123 }
+            amount: { type: number, format: float, example: 149.99 }
+            currency: { type: string, example: USD }
+            status:
+              type: string
+              enum: [authorized, captured, settled, failed]
+              example: settled
+            method:
+              type: string
+              enum: [card, ach, wallet, offline]
+              example: card
+            createdAt: { type: string, format: date-time }
+            failureReason: { type: string, nullable: true }
+        Refund:
+          type: object
+          required: [id, paymentId, amount, currency, status, createdAt]
+          properties:
+            id: { type: string, example: ref_789 }
+            paymentId: { type: string, example: pay_456 }
+            amount: { type: number, format: float, example: 20.00 }
+            currency: { type: string, example: USD }
+            status:
+              type: string
+              enum: [pending, succeeded, failed]
+              example: pending
+            reason: { type: string, nullable: true }
+            createdAt: { type: string, format: date-time }
+        Subscription:
+          type: object
+          required: [id, customerId, plan, status, startAt]
+          properties:
+            id: { type: string, example: sub_001 }
+            customerId: { type: string, example: cust_abc }
+            plan: { type: string, example: pro-monthly }
+            status:
+              type: string
+              enum: [active, past_due, canceled, trialing]
+              example: active
+            startAt: { type: string, format: date-time }
+            cancelAt: { type: string, format: date-time, nullable: true }
+            renewalAt: { type: string, format: date-time, nullable: true }
+            metadata:
+              type: object
+              additionalProperties: { type: string }
+        Error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: invalid_request }
+            message: { type: string, example: Missing required field 'amount' }
+            requestId: { type: string, example: req_abc123 }
+    paths:
+      /invoices:
+        get:
+          tags: [Invoices]
+          summary: List invoices
+          description: Returns a paginated list of invoices.
+          security:
+            - oauth2: [invoices.read]
+          parameters:
+            - in: query
+              name: customerId
+              schema: { type: string }
+            - in: query
+              name: status
+              schema:
+                type: string
+                enum: [draft, open, paid, void, uncollectible]
+            - in: query
+              name: limit
+              schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          responses:
+            '200':
+              description: OK
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Invoice' }
+                      nextPageToken: { type: string, nullable: true }
+            '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/Error' }}}}
+        post:
+          tags: [Invoices]
+          summary: Create an invoice
+          security:
+            - oauth2: [invoices.write, billing.write]
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [customerId, currency, lineItems]
+                  properties:
+                    customerId: { type: string }
+                    currency: { type: string, example: USD }
+                    lineItems:
+                      type: array
+                      items:
+                        type: object
+                        required: [sku, quantity, unitPrice]
+                        properties:
+                          sku: { type: string }
+                          quantity: { type: integer, minimum: 1 }
+                          unitPrice: { type: number, format: float }
+                    metadata:
+                      type: object
+                      additionalProperties: { type: string }
+          responses:
+            '201':
+              description: Created
+              content: { application/json: { schema: { $ref: '#/components/schemas/Invoice' }}}
+            '400': { description: Bad Request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' }}}}
+      /invoices/{id}:
+        get:
+          tags: [Invoices]
+          summary: Get an invoice
+          security:
+            - oauth2: [invoices.read]
+          parameters:
+            - in: path
+              name: id
+              required: true
+              schema: { type: string }
+          responses:
+            '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Invoice' }}}}
+            '404': { description: Not Found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' }}}}
+        patch:
+          tags: [Invoices]
+          summary: Update an invoice
+          security:
+            - oauth2: [invoices.write, billing.write]
+          parameters:
+            - in: path
+              name: id
+              required: true
+              schema: { type: string }
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    status:
+                      type: string
+                      enum: [draft, open, void, uncollectible]
+                    metadata:
+                      type: object
+                      additionalProperties: { type: string }
+          responses:
+            '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Invoice' }}}}
+            '400': { description: Bad Request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' }}}}
+      /payments:
+        post:
+          tags: [Payments]
+          summary: Create a payment
+          description: Charges a payment method against an invoice.
+          security:
+            - oauth2: [payments.create, billing.write]
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [invoiceId, amount, method]
+                  properties:
+                    invoiceId: { type: string }
+                    amount: { type: number, format: float }
+                    method:
+                      type: string
+                      enum: [card, ach, wallet, offline]
+                    capture: { type: boolean, default: true }
+          responses:
+            '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Payment' }}}}
+            '402': { description: Payment Required, content: { application/json: { schema: { $ref: '#/components/schemas/Error' }}}}
+        get:
+          tags: [Payments]
+          summary: List payments
+          security:
+            - oauth2: [payments.read, billing.read]
+          parameters:
+            - in: query
+              name: invoiceId
+              schema: { type: string }
+            - in: query
+              name: status
+              schema:
+                type: string
+                enum: [authorized, captured, settled, failed]
+          responses:
+            '200':
+              description: OK
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Payment' }
+      /refunds:
+        post:
+          tags: [Refunds]
+          summary: Create a refund
+          security:
+            - oauth2: [refunds.create, billing.write]
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [paymentId, amount]
+                  properties:
+                    paymentId: { type: string }
+                    amount: { type: number, format: float }
+                    reason: { type: string }
+          responses:
+            '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Refund' }}}}
+            '400': { description: Bad Request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' }}}}
+        get:
+          tags: [Refunds]
+          summary: List refunds
+          security:
+            - oauth2: [refunds.read, billing.read]
+          parameters:
+            - in: query
+              name: paymentId
+              schema: { type: string }
+          responses:
+            '200':
+              description: OK
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Refund' }
+      /subscriptions:
+        get:
+          tags: [Subscriptions]
+          summary: List subscriptions
+          security:
+            - oauth2: [subscriptions.read]
+          parameters:
+            - in: query
+              name: customerId
+              schema: { type: string }
+          responses:
+            '200':
+              description: OK
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Subscription' }
+        post:
+          tags: [Subscriptions]
+          summary: Create a subscription
+          security:
+            - oauth2: [subscriptions.write, billing.write]
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [customerId, plan]
+                  properties:
+                    customerId: { type: string }
+                    plan: { type: string }
+                    trialDays: { type: integer, minimum: 0, default: 0 }
+          responses:
+            '201':
+              description: Created
+              content:
+                application/json:
+                  schema: { $ref: '#/components/schemas/Subscription' }
+        patch:
+          tags: [Subscriptions]
+          summary: Update a subscription
+          security:
+            - oauth2: [subscriptions.write, billing.write]
+          parameters:
+            - in: query
+              name: id
+              required: true
+              schema: { type: string }
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    plan: { type: string }
+                    cancelAt: { type: string, format: date-time, nullable: true }
+          responses:
+            '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Subscription' }}}}
+    # No global security block to keep examples per-operation; add one if your gateway enforces global auth.
